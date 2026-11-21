@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#0b0f14">
+<title>Who's Watching? Satellite passes and public photos</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+  :root {
+    --bg:#0b0f14; --card:#121923; --card2:#0f151d; --line:#223042;
+    --ink:#e6edf5; --muted:#8b9bb0; --accent:#5aa9ff;
+    --orange:#ff9a3c; --green:#3ddc97; --red:#ff6b6b;
+  }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  html { -webkit-text-size-adjust:100%; }
+  body {
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; line-height:1.45;
+  }
+  a { color:var(--accent); }
+
+  /* progress line */
+  #progressLine { position:fixed; top:0; left:0; right:0; height:3px; z-index:2000; opacity:0; transition:opacity .3s; pointer-events:none; }
+  #progressLine.on { opacity:1; }
+  #progressFill { display:block; height:100%; width:0; background:linear-gradient(90deg, #3b82f6, #5aa9ff, #7cf0c9); transition:width .35s ease; }
+  #progressLine.error #progressFill { background:var(--red); }
+
+  .wrap { max-width:980px; margin:0 auto; padding:0 16px 40px; }
+  header.site { padding:28px 0 8px; }
+  h1 { font-size:clamp(26px, 6vw, 36px); margin:0 0 6px; letter-spacing:-.02em; }
+  .tag { color:var(--muted); margin:0 0 16px; max-width:640px; }
+  form { display:flex; gap:8px; }
+  input[type=search] {
+    flex:1; min-width:0; padding:12px 14px; font-size:16px; color:var(--ink);
+    background:var(--card); border:1px solid var(--line); border-radius:10px; outline:none;
+  }
+  input[type=search]:focus { border-color:var(--accent); }
+  input::placeholder { color:#5d6c80; }
+  button.go {
+    padding:12px 18px; min-height:44px; font-size:16px; font-weight:600; border:0; border-radius:10px;
+    background:var(--accent); color:#04101f; cursor:pointer;
+  }
+  button.go:disabled { opacity:.55; cursor:default; }
+  #status { margin:10px 0 0; min-height:22px; font-size:14px; color:var(--muted); }
+  #status.error { color:var(--red); }
+
+  .headline { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:18px; margin:14px 0 16px; }
+  .headline h2 { font-size:clamp(20px, 4.8vw, 28px); line-height:1.3; margin:0 0 8px; font-weight:600; }
+  .headline h2 .n { color:var(--accent); }
+  .headline p { margin:0; color:var(--muted); font-size:14px; }
+
+  #map { height:280px; border-radius:14px; border:1px solid var(--line); background:var(--card2); }
+  .leaflet-tile-pane { filter:invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.7); }
+  .leaflet-container { font-family:inherit; }
+  .leaflet-popup-content-wrapper, .leaflet-popup-tip { background:var(--card); color:var(--ink); }
+  .leaflet-control-attribution { background:rgba(11,15,20,.85) !important; color:var(--muted) !important; }
+  .leaflet-control-attribution a { color:var(--accent) !important; }
+  .leaflet-bar a { background:var(--card); color:var(--ink); border-bottom-color:var(--line); }
+
+  section.block { margin-top:26px; }
+  h3 { font-size:17px; margin:0 0 10px; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+
+  table { width:100%; border-collapse:collapse; }
+  thead th { text-align:left; color:var(--muted); font-weight:500; font-size:13px; padding:10px 12px; border-bottom:1px solid var(--line); }
+  tbody.sat td { padding:11px 12px; border-bottom:1px solid var(--line); vertical-align:top; }
+  tbody.sat:last-child tr:last-child td { border-bottom:0; }
+  td.num { width:80px; }
+  .sub { display:block; color:var(--muted); font-size:12px; margin-top:2px; }
+  button.toggle {
+    all:unset; cursor:pointer; font-weight:600; color:var(--ink); display:inline-flex; align-items:center; gap:8px;
+  }
+  button.toggle:focus-visible { outline:2px solid var(--accent); outline-offset:2px; border-radius:4px; }
+  button.toggle::before { content:"\25B8"; color:var(--muted); font-size:12px; transition:transform .15s; }
+  button.toggle[aria-expanded="true"]::before { transform:rotate(90deg); }
+  tbody.indian tr.main { background:rgba(255,154,60,.08); }
+  tbody.indian tr.main td:first-child { box-shadow:inset 3px 0 0 var(--orange); }
+  tbody.indian button.toggle { color:var(--orange); }
+  .badge { font-size:11px; font-weight:600; color:var(--orange); border:1px solid rgba(255,154,60,.5); border-radius:999px; padding:1px 7px; }
+
+  .pill { display:inline-block; padding:3px 10px; border-radius:999px; font-size:13px; font-weight:600; }
+  .pill.watched { background:rgba(61,220,151,.14); color:var(--green); }
+  .pill.likely { background:rgba(90,169,255,.14); color:var(--accent); }
+  .pill.overhead { background:rgba(139,155,176,.14); color:#9fb0c5; }
+
+  tr.detail td { background:var(--card2); padding:6px 12px 12px 34px; border-bottom:1px solid var(--line); }
+  .pass-line { font-size:13px; padding:4px 0; color:#c4d0de; }
+  .pass-line .ph { color:var(--green); font-weight:600; margin-left:6px; }
+  .pass-line .dim { color:var(--muted); }
+
+  .legend { color:var(--muted); font-size:13px; margin:12px 2px 0; }
+  .legend .sw { display:inline-block; width:10px; height:10px; border-radius:3px; background:var(--orange); margin-right:6px; }
+  .legend div { margin-top:4px; }
+
+  .grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 230px), 1fr)); gap:12px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; font-size:14px; }
+  .imgbox { background:var(--card2); aspect-ratio:1/1; display:flex; align-items:center; justify-content:center; color:var(--muted); text-align:center; padding:8px; }
+  .imgbox a { display:block; width:100%; height:100%; }
+  .imgbox img { width:100%; height:100%; object-fit:cover; display:block; }
+  .card .meta { padding:10px 12px 12px; }
+  .card .satname { font-weight:600; }
+  .match { margin-top:6px; font-size:13px; color:var(--muted); }
+  .match.yes { color:var(--green); }
+  .credit { margin-top:6px; font-size:11px; color:#667790; }
+
+  footer { margin-top:34px; padding-top:16px; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
+  footer h4 { margin:0 0 8px; font-size:13px; color:var(--ink); }
+  footer ul { margin:0 0 12px; padding-left:18px; }
+  footer li { margin:3px 0; }
+  footer p { margin:6px 0; }
+
+  @media (max-width:640px) {
+    .wrap { padding:0 12px 32px; }
+    thead { display:none; }
+    table, tbody.sat { display:block; }
+    tbody.sat { padding:12px; border-bottom:1px solid var(--line); }
+    tbody.sat:last-child { border-bottom:0; }
+    tr.main { display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; background:none; }
+    tbody.indian tr.main { background:none; }
+    tbody.indian { background:rgba(255,154,60,.08); box-shadow:inset 3px 0 0 var(--orange); }
+    tbody.indian tr.main td:first-child { box-shadow:none; }
+    tbody.sat tr.main td { display:block; padding:0; border:0; width:auto; }
+    td.name, td.status { grid-column:1 / -1; }
+    td[data-label]::before {
+      content:attr(data-label); display:block; font-size:11px; color:var(--muted);
+      text-transform:uppercase; letter-spacing:.05em; margin-bottom:1px;
+    }
+    tr.detail { display:block; }
+    tbody.sat tr.detail td { display:block; padding:8px 0 0; border:0; background:none; }
+    #map { height:240px; }
+  }
+</style>
+</head>
+<body>
+<div id="progressLine" aria-hidden="true"><span id="progressFill"></span></div>
+
+<div class="wrap">
+  <header class="site">
+    <h1>Who's watching?</h1>
+    <p class="tag">Search any place to see which Earth-observation satellites flew over it in the last 7 days, and which of their photos are public.</p>
+    <form id="searchForm">
+      <input id="q" type="search" placeholder="Search a place, e.g. Bengaluru" autocomplete="off" aria-label="Place name" required>
+      <button id="go" class="go" type="submit">Search</button>
+    </form>
+    <div id="status" role="status" aria-live="polite"></div>
+  </header>
+
+  <section id="headline" class="headline" hidden>
+    <h2 id="headlineText"></h2>
+    <p id="headlineMeta"></p>
+  </section>
+
+  <div id="map"></div>
+
+  <section id="tableSection" class="block" hidden>
+    <h3>Satellites that passed</h3>
+    <div class="panel" id="tableWrap"></div>
+    <div class="legend">
+      <div><span class="sw"></span>Indian satellite (CARTOSAT, RESOURCESAT, OCEANSAT, IRS, SRMSAT)</div>
+      <div><b>Watched, photo public</b>: a public photo from this satellite was taken within 10 minutes before to 60 minutes after a pass.</div>
+      <div><b>Likely watched</b>: a Sentinel-2 or Landsat 8/9 pass in daylight, when they take pictures. This is an estimate, no public photo was matched.</div>
+      <div><b>Passed overhead</b>: it flew over, nothing more is known.</div>
+      <div>Tap a satellite to see the time of each pass.</div>
+    </div>
+  </section>
+
+  <section id="photos" class="block"></section>
+
+  <footer>
+    <h4>Credits</h4>
+    <ul>
+      <li>Orbit data: <a href="https://celestrak.org" target="_blank" rel="noopener">CelesTrak</a></li>
+      <li>Sentinel-2 imagery: contains modified <a href="https://www.copernicus.eu" target="_blank" rel="noopener">Copernicus</a> Sentinel data</li>
+      <li>Landsat imagery: <a href="https://www.usgs.gov/landsat-missions" target="_blank" rel="noopener">USGS / NASA</a> Landsat program</li>
+      <li>Photo search and previews: <a href="https://planetarycomputer.microsoft.com" target="_blank" rel="noopener">Microsoft Planetary Computer</a></li>
+      <li>Map and place search: &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors (Nominatim, Leaflet)</li>
+    </ul>
+    <p>Passes are calculated in your browser from public orbit data (satellite.js). Sentinel-2 counts within 145 km of the place, Landsat 8/9 within 93 km, every other satellite at 10&deg; or more above the horizon. Pass times are accurate to about 10 seconds and shown in your local time.</p>
+  </footer>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/satellite.js@5.0.0/dist/satellite.min.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  // ---------- Settings ----------
+  const TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP=resource&FORMAT=tle";
+  const STAC_URL = "https://planetarycomputer.microsoft.com/api/stac/v1/search";
+  const CACHE_KEY = "tle-resource-cache-v1";
+  const CACHE_TTL_MS = 2 * 60 * 60 * 1000;
+  const WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+  const FAR_KM = 3500;
+  const FAR_STEP_MS = 120 * 1000;
+  const NEAR_STEP_MS = 10 * 1000;
+  const MIN_REVS_PER_DAY = 11;
+  const SENTINEL2_KM = 145;
+  const LANDSAT_KM = 93;
+  const MIN_ELEVATION_DEG = 10;
+  const EARTH_R_KM = 6371;
+  const BOX_DEG = 0.03;
+  const MATCH_BEFORE_MS = 10 * 60 * 1000;
+  const MATCH_AFTER_MS = 60 * 60 * 1000;
+  const STAC_MAX_PAGES = 5;
+  const INDIAN_RE = /\b(CARTOSAT|RESOURCESAT|OCEANSAT|IRS|SRMSAT)/i;
+
+  // ---------- Elements ----------
+  const $ = (id) => document.getElementById(id);
+  const statusEl = $("status"), photosEl = $("photos");
+  const headlineEl = $("headline"), headlineText = $("headlineText"), headlineMeta = $("headlineMeta");
+  const tableSection = $("tableSection"), tableWrap = $("tableWrap");
+  const form = $("searchForm"), goBtn = $("go"), qEl = $("q");
+  const lineEl = $("progressLine"), fillEl = $("progressFill");
+
+  function setStatus(msg, isError) {
+    statusEl.textContent = msg || "";
+    statusEl.className = isError ? "error" : "";
+  }
+
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+
+  // ---------- Progress line ----------
+  let progressTimer = null;
+  function setProgress(frac) {
+    clearTimeout(progressTimer);
+    lineEl.classList.remove("error");
+    lineEl.classList.add("on");
+    fillEl.style.width = (clamp(frac, 0, 1) * 100).toFixed(1) + "%";
+  }
+  function endProgress(ok) {
+    clearTimeout(progressTimer);
+    fillEl.style.width = "100%";
+    if (!ok) lineEl.classList.add("error");
+    progressTimer = setTimeout(function () {
+      lineEl.classList.remove("on");
+      lineEl.classList.remove("error");
+      fillEl.style.width = "0%";
+    }, ok ? 500 : 1800);
+  }
+
+  if (typeof L === "undefined" || typeof satellite === "undefined") {
+    setStatus("Could not load Leaflet or satellite.js from the CDN. Check your internet connection and reload.", true);
+    goBtn.disabled = true;
+    return;
+  }
+
+  // ---------- Map ----------
+  const map = L.map("map").setView([20, 0], 2);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+  let marker = null;
+
+  function showOnMap(lat, lon, label) {
+    if (marker) map.removeLayer(marker);
+    const pop = document.createElement("div");
+    pop.textContent = label;
+    marker = L.marker([lat, lon]).addTo(map).bindPopup(pop);
+    map.setView([lat, lon], 8);
+  }
+
+  // ---------- Geocoding ----------
+  async function geocode(place) {
+    const url = "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(place);
+    const res = await fetch(url, { headers: { "Accept": "application/json" } });
+    if (!res.ok) throw new Error("Place search failed (HTTP " + res.status + ").");
+    const data = await res.json();
+    if (!data.length) return null;
+    return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon), name: data[0].display_name };
+  }
+
+  // ---------- TLE download + cache ----------
+  function parseTLE(text) {
+    const lines = text.split(/\r?\n/).map((s) => s.trimEnd()).filter((s) => s.trim() !== "");
+    const sats = [];
+    for (let i = 0; i < lines.length - 2; ) {
+      if (lines[i + 1].startsWith("1 ") && lines[i + 2].startsWith("2 ")) {
+        sats.push({ name: lines[i].trim(), l1: lines[i + 1], l2: lines[i + 2] });
+        i += 3;
+      } else {
+        i += 1;
+      }
+    }
+    return sats;
+  }
+
+  function readCache() {
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (!raw) return null;
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj.t === "number" && typeof obj.text === "string") return obj;
+    } catch (e) { /* ignore */ }
+    return null;
+  }
+
+  function writeCache(text) {
+    try { localStorage.setItem(CACHE_KEY, JSON.stringify({ t: Date.now(), text: text })); }
+    catch (e) { /* storage full or blocked: carry on without cache */ }
+  }
+
+  let satList = null;
+
+  async function loadSatellites() {
+    if (satList) return satList;
+    const cached = readCache();
+    if (cached && Date.now() - cached.t < CACHE_TTL_MS) {
+      const parsed = parseTLE(cached.text);
+      if (parsed.length) {
+        satList = parsed;
+        return satList;
+      }
+    }
+    try {
+      setStatus("Downloading satellite orbits from CelesTrak…");
+      const res = await fetch(TLE_URL);
+      if (!res.ok) throw new Error("CelesTrak returned HTTP " + res.status + ".");
+      const text = await res.text();
+      const parsed = parseTLE(text);
+      if (!parsed.length) throw new Error("CelesTrak did not return any orbit data (" + text.slice(0, 80).trim() + ").");
+      writeCache(text);
+      satList = parsed;
+      return satList;
+    } catch (err) {
+      if (cached) {
+        const parsed = parseTLE(cached.text);
+        if (parsed.length) {
+          setStatus("Could not refresh orbits (" + err.message + "). Using older cached data.");
+          satList = parsed;
+          return satList;
+        }
+      }
+      throw err;
+    }
+  }
+
+  // ---------- Pass maths ----------
+  function haversineKm(lat1, lon1, lat2, lon2) {
+    const dLat = lat2 - lat1, dLon = lon2 - lon1;
+    const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
+    return 2 * EARTH_R_KM * Math.asin(Math.min(1, Math.sqrt(a)));
+  }
+
+  function kindOf(name) {
+    if (/^SENTINEL-2/i.test(name)) return { id: "s2", limitKm: SENTINEL2_KM };
+    if (/^LANDSAT\s*[89]\b/i.test(name)) return { id: "ls", limitKm: LANDSAT_KM };
+    return { id: "other" };
+  }
+
+  function sample(rec, date, observer, kind) {
+    const pv = satellite.propagate(rec, date);
+    if (!pv || !pv.position) return { range: Infinity, inside: false };
+    const gmst = satellite.gstime(date);
+    const ecf = satellite.eciToEcf(pv.position, gmst);
+    const look = satellite.ecfToLookAngles(observer, ecf);
+    const range = look.rangeSat;
+    const elevDeg = satellite.radiansToDegrees(look.elevation);
+    if (kind.id === "other") {
+      return { range: range, inside: elevDeg >= MIN_ELEVATION_DEG, metric: elevDeg };
+    }
+    const gd = satellite.eciToGeodetic(pv.position, gmst);
+    const ground = haversineKm(observer.latitude, observer.longitude, gd.latitude, gd.longitude);
+    return { range: range, inside: ground <= kind.limitKm, metric: ground };
+  }
+
+  function findPasses(rec, kind, observer, startMs, endMs) {
+    const passes = [];
+    let cur = null;
+    let t = startMs;
+    while (t <= endMs) {
+      const s = sample(rec, new Date(t), observer, kind);
+      if (s.inside) {
+        if (!cur) cur = { start: t, end: t, best: s.metric };
+        cur.end = t;
+        if (kind.id === "other") { if (s.metric > cur.best) cur.best = s.metric; }
+        else if (s.metric < cur.best) cur.best = s.metric;
+      } else if (cur) {
+        passes.push(cur);
+        cur = null;
+      }
+      t += s.range > FAR_KM ? FAR_STEP_MS : NEAR_STEP_MS;
+    }
+    if (cur) passes.push(cur);
+    return passes;
+  }
+
+  // Sun height above the horizon (degrees) at a place and time. Good to about a degree.
+  function sunElevationDeg(latDeg, lonDeg, ms) {
+    const rad = Math.PI / 180;
+    const jd = ms / 86400000 + 2440587.5;
+    const n = jd - 2451545.0;
+    const L0 = (280.460 + 0.9856474 * n) % 360;
+    const g = ((357.528 + 0.9856003 * n) % 360) * rad;
+    const lambda = (L0 + 1.915 * Math.sin(g) + 0.020 * Math.sin(2 * g)) * rad;
+    const eps = (23.439 - 0.0000004 * n) * rad;
+    const ra = Math.atan2(Math.cos(eps) * Math.sin(lambda), Math.cos(lambda));
+    const dec = Math.asin(Math.sin(eps) * Math.sin(lambda));
+    const gmstHours = (18.697374558 + 24.06570982441908 * n) % 24;
+    const lst = (gmstHours * 15 + lonDeg) * rad;
+    const ha = lst - ra;
+    const lat = latDeg * rad;
+    const sinEl = Math.sin(lat) * Math.sin(dec) + Math.cos(lat) * Math.cos(dec) * Math.cos(ha);
+    return Math.asin(clamp(sinEl, -1, 1)) / rad;
+  }
+
+  // ---------- Photos (Planetary Computer) ----------
+  const num = (n) => Number(n.toFixed(5));
+  const isoZ = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+
+  function makeBox(lat, lon) {
+    return {
+      minLon: num(clamp(lon - BOX_DEG, -180, 180)),
+      minLat: num(clamp(lat - BOX_DEG, -90, 90)),
+      maxLon: num(clamp(lon + BOX_DEG, -180, 180)),
+      maxLat: num(clamp(lat + BOX_DEG, -90, 90))
+    };
+  }
+
+  function cropUrl(href, box) {
+    const marker = "/item/preview.png?";
+    const bboxStr = [box.minLon, box.minLat, box.maxLon, box.maxLat].join(",");
+    if (href.indexOf(marker) !== -1) return href.replace(marker, "/item/bbox/" + bboxStr + ".png?");
+    return href;
+  }
+
+  async function fetchScenes(place, startMs, endMs) {
+    const box = makeBox(place.lat, place.lon);
+    const bboxStr = [box.minLon, box.minLat, box.maxLon, box.maxLat].join(",");
+    let url = STAC_URL + "?collections=sentinel-2-l2a,landsat-c2-l2&bbox=" + bboxStr +
+      "&datetime=" + isoZ(startMs) + "/" + isoZ(endMs) + "&limit=100";
+    const features = [];
+    for (let page = 0; page < STAC_MAX_PAGES && url; page++) {
+      const res = await fetch(url, { headers: { "Accept": "application/geo+json, application/json" } });
+      if (!res.ok) throw new Error("Planetary Computer returned HTTP " + res.status + ".");
+      const data = await res.json();
+      if (Array.isArray(data.features)) features.push.apply(features, data.features);
+      const next = (data.links || []).find((l) => l.rel === "next" && (!l.method || String(l.method).toUpperCase() === "GET"));
+      url = next && next.href ? next.href : null;
+    }
+
+    const scenes = [];
+    for (const f of features) {
+      const p = f.properties || {};
+      const timeMs = Date.parse(p.datetime || p.start_datetime || "");
+      if (isNaN(timeMs)) continue;
+      const href = f.assets && f.assets.rendered_preview && f.assets.rendered_preview.href;
+      scenes.push({
+        id: f.id,
+        collection: f.collection,
+        platform: p.platform || f.collection || "unknown",
+        timeMs: timeMs,
+        cloud: typeof p["eo:cloud_cover"] === "number" ? p["eo:cloud_cover"] : null,
+        imageUrl: href && /^https:\/\//i.test(href) ? cropUrl(href, box) : null,
+        match: null
+      });
+    }
+    scenes.sort((a, b) => b.timeMs - a.timeMs);
+    return scenes;
+  }
+
+  const normName = (s) => String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+  function buildPassIndex(results) {
+    const index = new Map();
+    for (const r of results) {
+      const key = normName(r.name);
+      if (!index.has(key)) index.set(key, []);
+      Array.prototype.push.apply(index.get(key), r.passes);
+    }
+    return index;
+  }
+
+  // Pass of the same satellite that overlaps [photo - 10 min, photo + 60 min]; nearest one wins.
+  function matchPass(scene, passIndex) {
+    const key = normName(scene.platform);
+    if (!key) return null;
+    let list = null;
+    for (const entry of passIndex) {
+      if (entry[0] === key || entry[0].indexOf(key) === 0) { list = entry[1]; break; }
+    }
+    if (!list) return null;
+    const lo = scene.timeMs - MATCH_BEFORE_MS, hi = scene.timeMs + MATCH_AFTER_MS;
+    let best = null;
+    for (const p of list) {
+      if (p.end >= lo && p.start <= hi) {
+        if (!best || Math.abs(p.start - scene.timeMs) < Math.abs(best.start - scene.timeMs)) best = p;
+      }
+    }
+    return best;
+  }
+
+  function creditOf(scene) {
+    if (scene.collection === "sentinel-2-l2a") return "Contains modified Copernicus Sentinel data";
+    if (scene.collection === "landsat-c2-l2") return "Landsat imagery courtesy of USGS / NASA";
+    return "Via Microsoft Planetary Computer";
+  }
+
+  // ---------- Formatting ----------
+  function fmtTime(ms) {
+    return new Date(ms).toLocaleString(undefined, {
+      year: "numeric", month: "short", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false
+    });
+  }
+  function fmtShort(ms) {
+    return new Date(ms).toLocaleString(undefined, {
+      day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false
+    });
+  }
+  function fmtClock(ms) {
+    return new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+  }
+  function fmtDuration(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    const m = Math.floor(s / 60);
+    return m + " min " + String(s % 60).padStart(2, "0") + " s";
+  }
+  function ago(ms) {
+    const m = Math.max(0, Math.round((Date.now() - ms) / 60000));
+    if (m < 60) return m + " min ago";
+    const h = Math.floor(m / 60);
+    if (h < 48) return h + " h ago";
+    return Math.floor(h / 24) + " d ago";
+  }
+  function el(tag, text, cls) {
+    const e = document.createElement(tag);
+    if (text !== undefined) e.textContent = text;
+    if (cls) e.className = cls;
+    return e;
+  }
+
+  // ---------- Rendering ----------
+  const STATUS_TEXT = {
+    watched: "Watched, photo public",
+    likely: "Likely watched",
+    overhead: "Passed overhead"
+  };
+  const STATUS_RANK = { watched: 0, likely: 1, overhead: 2 };
+
+  function statusOf(r) {
+    if (r.passes.some((p) => p.photos && p.photos.length)) return "watched";
+    if (r.kind.id !== "other" && r.passes.some((p) => p.daylight)) return "likely";
+    return "overhead";
+  }
+
+  function renderHeadline(nSats, placeShort, photoCount, photosFailed, usedCount, skippedCount, startMs, endMs, fullName) {
+    headlineText.textContent = "";
+    headlineText.appendChild(document.createTextNode("In the last 7 days, "));
+    headlineText.appendChild(el("span", nSats + (nSats === 1 ? " satellite" : " satellites"), "n"));
+    headlineText.appendChild(document.createTextNode(" passed over " + placeShort + ". "));
+    if (photosFailed) {
+      headlineText.appendChild(document.createTextNode("Photos could not be loaded."));
+    } else {
+      headlineText.appendChild(el("span", photoCount + (photoCount === 1 ? " photo" : " photos"), "n"));
+      headlineText.appendChild(document.createTextNode(photoCount === 1 ? " is public." : " are public."));
+    }
+    headlineMeta.textContent = fullName + " \u00b7 " + fmtShort(startMs) + " to " + fmtShort(endMs) +
+      " \u00b7 checked " + usedCount + " satellites, skipped " + skippedCount + " with fewer than " + MIN_REVS_PER_DAY + " orbits a day";
+    headlineEl.hidden = false;
+  }
+
+  function renderTable(rows) {
+    tableWrap.textContent = "";
+    if (!rows.length) {
+      const p = el("p", "No satellite in this group passed over that place in the last 7 days.");
+      p.style.padding = "14px";
+      p.style.margin = "0";
+      tableWrap.appendChild(p);
+      tableSection.hidden = false;
+      return;
+    }
+
+    const table = el("table");
+    const thead = el("thead");
+    const hr = el("tr");
+    ["Satellite", "Passes", "Last pass", "Status"].forEach((h) => hr.appendChild(el("th", h)));
+    thead.appendChild(hr);
+    table.appendChild(thead);
+
+    for (const r of rows) {
+      const tb = el("tbody", undefined, "sat" + (r.indian ? " indian" : ""));
+
+      const tr = el("tr", undefined, "main");
+      const tdName = el("td", undefined, "name");
+      const btn = el("button", r.name, "toggle");
+      btn.type = "button";
+      btn.setAttribute("aria-expanded", "false");
+      tdName.appendChild(btn);
+      if (r.indian) {
+        tdName.appendChild(document.createTextNode(" "));
+        tdName.appendChild(el("span", "India", "badge"));
+      }
+      tr.appendChild(tdName);
+
+      const tdN = el("td", String(r.passes.length), "num");
+      tdN.setAttribute("data-label", "Passes");
+      tr.appendChild(tdN);
+
+      const tdLast = el("td");
+      tdLast.setAttribute("data-label", "Last pass");
+      tdLast.appendChild(document.createTextNode(fmtShort(r.last)));
+      tdLast.appendChild(el("span", ago(r.last), "sub"));
+      tdLast.title = new Date(r.last).toISOString();
+      tr.appendChild(tdLast);
+
+      const tdSt = el("td", undefined, "status");
+      tdSt.appendChild(el("span", STATUS_TEXT[r.status], "pill " + r.status));
+      if (r.photoCount) tdSt.appendChild(el("span", r.photoCount + (r.photoCount === 1 ? " photo" : " photos"), "sub"));
+      tr.appendChild(tdSt);
+      tb.appendChild(tr);
+
+      const trD = el("tr", undefined, "detail");
+      trD.hidden = true;
+      const tdD = el("td");
+      tdD.colSpan = 4;
+      for (const p of r.passes) {
+        const line = el("div", undefined, "pass-line");
+        line.appendChild(document.createTextNode(fmtShort(p.start) + ", " + fmtClock(p.start) + " to " + fmtClock(p.end)));
+        const metric = r.kind.id === "other" ? "max elevation " + p.best.toFixed(1) + "\u00b0" : "closest " + p.best.toFixed(0) + " km";
+        line.appendChild(el("span", " \u00b7 " + fmtDuration(p.end - p.start) + " \u00b7 " + metric, "dim"));
+        if (p.photos && p.photos.length) line.appendChild(el("span", "photo public", "ph"));
+        line.title = new Date(p.start).toISOString();
+        tdD.appendChild(line);
+      }
+      trD.appendChild(tdD);
+      tb.appendChild(trD);
+
+      btn.addEventListener("click", function () {
+        const open = trD.hidden;
+        trD.hidden = !open;
+        btn.setAttribute("aria-expanded", open ? "true" : "false");
+      });
+
+      table.appendChild(tb);
+    }
+    tableWrap.appendChild(table);
+    tableSection.hidden = false;
+  }
+
+  function renderPhotos(scenes, failedMessage) {
+    photosEl.textContent = "";
+    if (failedMessage) {
+      photosEl.appendChild(el("h3", "Public photos"));
+      const msg = el("p", "Could not load photos: " + failedMessage);
+      msg.style.color = "var(--red)";
+      photosEl.appendChild(msg);
+      return;
+    }
+    const matched = scenes.filter((s) => s.match).length;
+    photosEl.appendChild(el("h3", "Public photos \u00b7 " + scenes.length + " scene" + (scenes.length === 1 ? "" : "s") +
+      ", " + matched + " matched to a pass"));
+
+    if (!scenes.length) {
+      const p = el("p", "No Sentinel-2 or Landsat scenes cover this place in the last 7 days.");
+      p.style.color = "var(--muted)";
+      photosEl.appendChild(p);
+      return;
+    }
+
+    const grid = el("div", undefined, "grid");
+    for (const s of scenes) {
+      const card = el("div", undefined, "card");
+      const box = el("div", undefined, "imgbox");
+      if (s.imageUrl) {
+        const a = el("a");
+        a.href = s.imageUrl;
+        a.target = "_blank";
+        a.rel = "noopener";
+        const img = document.createElement("img");
+        img.loading = "lazy";
+        img.alt = s.platform + " photo, " + fmtTime(s.timeMs);
+        img.src = s.imageUrl;
+        img.addEventListener("error", function () { box.textContent = "Preview could not be loaded"; });
+        a.appendChild(img);
+        box.appendChild(a);
+      } else {
+        box.textContent = "No preview available";
+      }
+      card.appendChild(box);
+
+      const meta = el("div", undefined, "meta");
+      meta.appendChild(el("div", s.platform, "satname"));
+      const dt = el("div", fmtTime(s.timeMs));
+      dt.title = new Date(s.timeMs).toISOString();
+      meta.appendChild(dt);
+      meta.appendChild(el("div", "Cloud cover: " + (s.cloud === null ? "n/a" : s.cloud.toFixed(1) + "%")));
+      if (s.match) {
+        const diffMin = (s.match.start - s.timeMs) / 60000;
+        const rel = Math.abs(diffMin).toFixed(1) + " min " + (diffMin >= 0 ? "after" : "before") + " the photo";
+        meta.appendChild(el("div", "Pass: " + fmtShort(s.match.start) + ", " + fmtClock(s.match.start) + " (" + rel + ")", "match yes"));
+      } else {
+        meta.appendChild(el("div", "No matching pass found", "match"));
+      }
+      meta.appendChild(el("div", creditOf(s), "credit"));
+      card.appendChild(meta);
+      grid.appendChild(card);
+    }
+    photosEl.appendChild(grid);
+  }
+
+  // ---------- Main search flow ----------
+  let runId = 0;
+  const yieldToUI = () => new Promise((r) => setTimeout(r, 0));
+
+  async function runSearch(query) {
+    const myRun = ++runId;
+    goBtn.disabled = true;
+    headlineEl.hidden = true;
+    tableSection.hidden = true;
+    tableWrap.textContent = "";
+    photosEl.textContent = "";
+
+    try {
+      setProgress(0.03);
+      setStatus("Finding place…");
+      const place = await geocode(query);
+      if (myRun !== runId) return;
+      if (!place) {
+        setStatus("No place found for \u201c" + query + "\u201d.", true);
+        endProgress(false);
+        return;
+      }
+      setProgress(0.1);
+      showOnMap(place.lat, place.lon, place.name);
+      const placeShort = (place.name.split(",")[0] || query).trim() || query;
+
+      // Same 7-day window for passes and photos.
+      const endMs = Date.now();
+      const startMs = endMs - WINDOW_MS;
+
+      // Start the photo search now so it runs while the orbits are scanned.
+      const scenesPromise = fetchScenes(place, startMs, endMs).then(
+        (scenes) => ({ scenes: scenes }),
+        (err) => ({ error: err })
+      );
+
+      const sats = await loadSatellites();
+      if (myRun !== runId) return;
+      setProgress(0.2);
+
+      const observer = {
+        latitude: satellite.degreesToRadians(place.lat),
+        longitude: satellite.degreesToRadians(place.lon),
+        height: 0
+      };
+
+      const usable = [];
+      let skipped = 0;
+      for (const s of sats) {
+        let rec;
+        try { rec = satellite.twoline2satrec(s.l1, s.l2); } catch (e) { skipped++; continue; }
+        const revsPerDay = rec.no * 1440 / (2 * Math.PI); // rec.no is in rad/min
+        if (!(revsPerDay >= MIN_REVS_PER_DAY)) { skipped++; continue; }
+        usable.push({ name: s.name, rec: rec, kind: kindOf(s.name) });
+      }
+
+      const results = [];
+      for (let i = 0; i < usable.length; i++) {
+        if (myRun !== runId) return;
+        const u = usable[i];
+        setStatus("Replaying 7 days: " + (i + 1) + " / " + usable.length + " \u2014 " + u.name);
+        setProgress(0.2 + 0.7 * ((i + 1) / usable.length));
+        const passes = findPasses(u.rec, u.kind, observer, startMs, endMs);
+        results.push({ name: u.name, kind: u.kind, passes: passes });
+        await yieldToUI();
+      }
+      if (myRun !== runId) return;
+
+      setStatus("Loading photos…");
+      setProgress(0.93);
+      const photoResult = await scenesPromise;
+      if (myRun !== runId) return;
+
+      // Daylight flag for every pass.
+      for (const r of results) {
+        for (const p of r.passes) {
+          p.daylight = sunElevationDeg(place.lat, place.lon, (p.start + p.end) / 2) > 0;
+        }
+      }
+
+      // Match photos to passes of the same satellite.
+      const photosFailed = !!photoResult.error;
+      const scenes = photosFailed ? [] : photoResult.scenes;
+      const passIndex = buildPassIndex(results);
+      for (const s of scenes) {
+        const p = matchPass(s, passIndex);
+        s.match = p;
+        if (p) (p.photos = p.photos || []).push(s);
+      }
+
+      // One row per satellite that passed.
+      const rows = results.filter((r) => r.passes.length).map((r) => ({
+        name: r.name,
+        kind: r.kind,
+        passes: r.passes,
+        last: r.passes[r.passes.length - 1].start,
+        status: statusOf(r),
+        photoCount: r.passes.reduce((n, p) => n + (p.photos ? p.photos.length : 0), 0),
+        indian: INDIAN_RE.test(r.name)
+      }));
+      rows.sort((a, b) => STATUS_RANK[a.status] - STATUS_RANK[b.status] || b.last - a.last || a.name.localeCompare(b.name));
+
+      renderHeadline(rows.length, placeShort, scenes.length, photosFailed, usable.length, skipped, startMs, endMs, place.name);
+      renderTable(rows);
+      renderPhotos(scenes, photosFailed ? photoResult.error.message : null);
+
+      setStatus("");
+      endProgress(true);
+    } catch (err) {
+      if (myRun === runId) {
+        setStatus("Something went wrong: " + err.message, true);
+        endProgress(false);
+      }
+    } finally {
+      if (myRun === runId) goBtn.disabled = false;
+    }
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    const q = qEl.value.trim();
+    if (q) runSearch(q);
+  });
+})();
+</script>
+</body>
+</html>
